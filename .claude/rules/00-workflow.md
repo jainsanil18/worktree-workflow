@@ -237,13 +237,68 @@ Use the project's PR template if one exists. Include `Closes #NNN`.
 
 ## Phase 6: REVIEW -- Resolve PR Feedback
 
+**The job is NOT finished when the PR opens.** A PR is only complete when **both** of the following are true:
+
+1. **CI is green** -- every required check on the PR has status `success` (or is explicitly waived by a maintainer in the thread).
+2. **All reviewer comments are resolved** -- every actionable comment from a human reviewer or bot (CodeRabbit, Codecov, etc.) has either been addressed by a follow-up commit OR explicitly acknowledged + replied to with reasoning if intentionally deferred.
+
+Until both conditions hold, the issue stays in `phase: 6-REVIEW`. Do not mark `DONE`, do not start cleanup, do not move on to a new issue's Phase 4 in the same project area.
+
+### Step 1: Initial scan (run immediately after opening the PR)
+
 ```bash
+# Top-level + review summaries
 gh pr view NNN -R <repo> --comments
+
+# Inline review comments (file:line annotations)
 gh api repos/<owner>/<repo>/pulls/NNN/comments
+
+# CI status
 gh pr checks NNN -R <repo>
 ```
 
-For each comment: understand, fix, commit, push.
+Record a snapshot in workflow state: count of unresolved comments, list of failing/pending checks.
+
+### Step 2: Continuous re-scan until both gates close
+
+After every push to the branch (and at session start if the entry is in `phase: 6-REVIEW`), re-run all three commands above. CI re-runs on each push, and reviewer comments arrive asynchronously.
+
+For sustained monitoring of a long-running run, prefer a one-shot wait command over polling in chat:
+
+```bash
+gh pr checks NNN -R <repo> --watch    # blocks until all checks reach a terminal state
+```
+
+When that exits, re-read the comments -- reviewers often arrive after CI signals.
+
+### Step 3: Address every signal
+
+| Signal | Action |
+|---|---|
+| **CI check failed** | Read the failure log (`gh run view <run-id> --log-failed -R <repo>`), reproduce locally if possible, fix in worktree, commit, push. Do NOT bypass with `--no-verify` unless the failure is unrelated to your changes AND the user has authorised it. |
+| **CI check pending too long** | Don't escalate prematurely. If a check has been pending >30 min and others have completed, surface to the user before assuming it's broken. |
+| **Reviewer comment -- actionable** | Fix in the worktree. Commit message should reference the feedback. Push. Reply on the thread once the fix lands. |
+| **Reviewer comment -- bot (CodeRabbit / Codecov)** | Treat as actionable unless clearly false-positive. If false-positive, reply on the thread with a one-line reason. |
+| **Reviewer comment -- request to defer** | Reply on the thread acknowledging, link a follow-up issue/TODO if you're filing one, and persist the deferred item under "Deferred follow-ups". |
+| **Approval received** | Note that the PR is approved and awaiting merge. The job stays in `6-REVIEW` until the PR is actually merged or closed. |
+
+### Step 4: Closing the loop
+
+The PR exits `6-REVIEW` when **all** of the following hold:
+
+- All required CI checks are `success`.
+- Every reviewer comment thread is resolved (closed by a maintainer, or your reply has been acknowledged, or you've filed a follow-up and noted it as deferred).
+- The PR is either **merged** (transition to Cleanup) or **closed** as withdrawn / duplicate (note the reason and skip Cleanup).
+
+Update workflow state after each scan -- current CI status, count of open vs resolved comments, last-scan timestamp. When both gates close, transition to `DONE` (if merged) or `CLOSED` (if withdrawn).
+
+### Anti-patterns
+
+- Opening the PR and stopping. Phase 5 is not the finish line -- Phase 6 is.
+- Pushing fix commits without re-scanning CI on the new commits. Each push starts a new check run; assume nothing.
+- Marking `DONE` because "the PR was opened" or "I pushed the review fixes". `DONE` requires merge.
+- Treating bot comments (CodeRabbit, Codecov) as ignorable noise. They are part of the review surface; respond to each one.
+- Reusing the worktree for unrelated work while the PR is still in `6-REVIEW`. Keep the worktree clean for review-feedback iteration until the PR is closed.
 
 ---
 
